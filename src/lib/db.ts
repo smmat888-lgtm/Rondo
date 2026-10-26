@@ -67,7 +67,82 @@ CREATE TABLE IF NOT EXISTS tip_shares (
   amount_cents INTEGER NOT NULL,
   PRIMARY KEY (pool_id, staff_id)
 );
+
+-- Automation tables.
+-- Availability: windows when someone can work, by day of week (0 = Sunday).
+-- A staff member with no rows is treated as available any time.
+CREATE TABLE IF NOT EXISTS availability (
+  staff_id TEXT NOT NULL REFERENCES staff(id),
+  dow INTEGER NOT NULL CHECK (dow BETWEEN 0 AND 6),
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  PRIMARY KEY (staff_id, dow)
+);
+CREATE TABLE IF NOT EXISTS time_off (
+  staff_id TEXT NOT NULL REFERENCES staff(id),
+  date TEXT NOT NULL,
+  reason TEXT,
+  PRIMARY KEY (staff_id, date)
+);
+-- A week is a draft until the manager publishes it. Staff only see published weeks.
+CREATE TABLE IF NOT EXISTS schedule_weeks (
+  venue_id TEXT NOT NULL REFERENCES venues(id),
+  week_start TEXT NOT NULL,
+  published_at TEXT,
+  PRIMARY KEY (venue_id, week_start)
+);
+-- Shifts with nobody on them yet. Rondo offers them to eligible staff in order.
+CREATE TABLE IF NOT EXISTS open_shifts (
+  id TEXT PRIMARY KEY,
+  venue_id TEXT NOT NULL REFERENCES venues(id),
+  role TEXT NOT NULL,
+  start_at TEXT NOT NULL,
+  end_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('draft','open','filled','unfilled','cancelled')),
+  reason TEXT,
+  excluded_staff_id TEXT,
+  filled_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS open_shifts_by_time ON open_shifts(venue_id, start_at);
+CREATE TABLE IF NOT EXISTS shift_offers (
+  id TEXT PRIMARY KEY,
+  open_shift_id TEXT NOT NULL REFERENCES open_shifts(id) ON DELETE CASCADE,
+  staff_id TEXT NOT NULL REFERENCES staff(id),
+  wave INTEGER NOT NULL,
+  sent_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','accepted','declined','expired','taken')),
+  responded_at TEXT,
+  UNIQUE (open_shift_id, staff_id)
+);
+-- In-app messages. staff_id NULL means the managers' inbox.
+CREATE TABLE IF NOT EXISTS notifications (
+  id TEXT PRIMARY KEY,
+  venue_id TEXT NOT NULL REFERENCES venues(id),
+  staff_id TEXT,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  read_at TEXT,
+  email_to TEXT,
+  email_status TEXT CHECK (email_status IN ('queued','sent','skipped','failed'))
+);
+CREATE INDEX IF NOT EXISTS notifications_by_staff ON notifications(venue_id, staff_id, created_at);
 `;
+
+// Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS".
+const ADDED_COLUMNS: [table: string, column: string, definition: string][] = [
+  ["staff", "email", "TEXT"],
+  ["staff", "max_week_minutes", "INTEGER"],
+];
+
+function migrate(db: DatabaseSync) {
+  for (const [table, column, definition] of ADDED_COLUMNS) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
 
 export function hashPin(staffId: string, pin: string): string {
   return createHash("sha256").update(`${staffId}:${pin}`).digest("hex");
@@ -78,6 +153,7 @@ export function openDb(path: string): DB {
   const db = new Sqlite(path);
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
 }
 
@@ -89,17 +165,21 @@ export function seedDemo(db: DB) {
   const exists = db.prepare("SELECT 1 FROM venues WHERE id = ?").get(DEMO_VENUE);
   if (exists) return;
   db.prepare("INSERT INTO venues (id, name) VALUES (?, ?)").run(DEMO_VENUE, "Demo Bar (sample data)");
-  const people: [string, string, string, number, number][] = [
-    ["staff-maria", "Maria Lopez", "Bartender", 1800, 1],
-    ["staff-jamal", "Jamal Reid", "Server", 1700, 1],
-    ["staff-sophie", "Sophie Tremblay", "Server", 1700, 1],
-    ["staff-liam", "Liam MacDonald", "Line cook", 2100, 1],
-    ["staff-ava", "Ava Chen", "Manager", 2600, 0],
+  // id, name, role, rate, tip eligible, max hours a week they want (null = no limit)
+  const people: [string, string, string, number, number, number | null][] = [
+    ["staff-maria", "Maria Lopez", "Bartender", 1800, 1, null],
+    ["staff-noah", "Noah Gallant", "Bartender", 1750, 1, 24],
+    ["staff-jamal", "Jamal Reid", "Server", 1700, 1, null],
+    ["staff-sophie", "Sophie Tremblay", "Server", 1700, 1, null],
+    ["staff-priya", "Priya Nair", "Server", 1700, 1, 20],
+    ["staff-liam", "Liam MacDonald", "Line cook", 2100, 1, null],
+    ["staff-ava", "Ava Chen", "Manager", 2600, 0, null],
   ];
   const ins = db.prepare(
-    "INSERT INTO staff (id, venue_id, name, role, hourly_rate_cents, pin_hash, tip_eligible) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO staff (id, venue_id, name, role, hourly_rate_cents, pin_hash, tip_eligible, email, max_week_minutes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
-  for (const [id, name, role, rate, tips] of people) {
-    ins.run(id, DEMO_VENUE, name, role, rate, hashPin(id, "1234"), tips);
+  for (const [id, name, role, rate, tips, maxHours] of people) {
+    const email = `${id.replace("staff-", "")}@example.com`;
+    ins.run(id, DEMO_VENUE, name, role, rate, hashPin(id, "1234"), tips, email, maxHours == null ? null : maxHours * 60);
   }
 }

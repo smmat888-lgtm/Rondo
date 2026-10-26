@@ -1,15 +1,25 @@
 import { NextResponse } from "next/server";
+import { listOpenShifts, weekStatus } from "@/lib/automation";
+import { listNotifications } from "@/lib/notify";
 import { createShift, listShifts, weekRange } from "@/lib/repo";
-import { bad, body, currentVenue, todayIn } from "@/lib/server";
+import { bad, body, currentVenue, runAutomation, todayIn } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
 
-export function GET(req: Request) {
+export async function GET(req: Request) {
   const { db, venue } = currentVenue();
   const date = new URL(req.url).searchParams.get("week") ?? todayIn(venue.timezone);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return bad("week must be YYYY-MM-DD");
+  await runAutomation(db, venue);
   const range = weekRange(venue, date);
-  return NextResponse.json({ weekStart: range.start, days: range.days, shifts: listShifts(db, venue.id, range.fromUtc, range.toUtc) });
+  return NextResponse.json({
+    weekStart: range.start,
+    days: range.days,
+    publishedAt: weekStatus(db, venue, date).publishedAt,
+    shifts: listShifts(db, venue.id, range.fromUtc, range.toUtc),
+    openShifts: listOpenShifts(db, venue, date),
+    inbox: listNotifications(db, venue.id, null, 12),
+  });
 }
 
 export async function POST(req: Request) {

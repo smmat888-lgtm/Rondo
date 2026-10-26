@@ -1,8 +1,10 @@
-// Fills the demo bar with a realistic week: shifts for this week and next,
-// and punches for the last few nights, so every screen has something to show.
+// Fills the demo bar with a realistic month: four past weeks and this week
+// published, punches for the last few nights, availability and one time-off
+// request. Next week is left empty so "Auto-build" has something to do.
 
 import { randomUUID } from "node:crypto";
 import { DEMO_VENUE, type DB } from "./db";
+import { setAvailability, setTimeOff } from "./automation";
 import { createShift, getVenue, recordPunch, saveTipPool } from "./repo";
 import { addDays, startOfWeek, zonedToUtc } from "./time";
 
@@ -27,6 +29,10 @@ const PLAN: [string, number, string, string][] = [
   ["staff-ava", 3, "15:00", "23:00"],
   ["staff-ava", 4, "15:00", "01:00"],
   ["staff-ava", 5, "15:00", "01:00"],
+  ["staff-noah", 5, "20:00", "02:00"],
+  ["staff-noah", 6, "12:00", "20:00"],
+  ["staff-priya", 6, "11:00", "17:00"],
+  ["staff-priya", 0, "17:00", "22:00"],
 ];
 
 export function seedDemoActivity(db: DB, now = new Date()) {
@@ -35,11 +41,23 @@ export function seedDemoActivity(db: DB, now = new Date()) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: venue.timezone }).format(now);
   const monday = startOfWeek(today, venue.weekStart);
 
-  for (const week of [-7, 0, 7]) {
+  const publish = db.prepare("INSERT OR IGNORE INTO schedule_weeks (venue_id, week_start, published_at) VALUES (?, ?, ?)");
+  for (const week of [-28, -21, -14, -7, 0]) {
     for (const [staffId, dow, start, end] of PLAN) {
       createShift(db, venue, { staffId, date: addDays(monday, week + dow), start, end });
     }
+    publish.run(venue.id, addDays(monday, week), new Date(Date.parse(`${addDays(monday, week - 4)}T15:00:00Z`)).toISOString());
   }
+
+  // Sophie works days early in the week and late on weekends only. (0 = Sunday)
+  setAvailability(db, "staff-sophie", [
+    { dow: 1, start: "10:00", end: "17:00" },
+    { dow: 2, start: "10:00", end: "17:00" },
+    { dow: 5, start: "17:00", end: "03:00" },
+    { dow: 6, start: "17:00", end: "03:00" },
+  ]);
+  // Maria asked for next Friday off, so Rondo has to find another bartender.
+  setTimeOff(db, "staff-maria", addDays(monday, 11), true, "Family wedding");
 
   // Punches for shifts that already ended, roughly matching the schedule.
   const tipDays = new Set<string>();
