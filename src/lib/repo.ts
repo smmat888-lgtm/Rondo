@@ -16,6 +16,8 @@ export type Staff = {
   role: string;
   hourlyRateCents: number;
   tipEligible: boolean;
+  email: string | null;
+  maxWeekMinutes: number | null;
 };
 export type Shift = { id: string; staffId: string; role: string; startAt: string; endAt: string; note: string | null };
 
@@ -39,6 +41,8 @@ export function listStaff(db: DB, venueId: string): Staff[] {
     role: str(r.role),
     hourlyRateCents: Number(r.hourly_rate_cents),
     tipEligible: Number(r.tip_eligible) === 1,
+    email: r.email == null ? null : str(r.email),
+    maxWeekMinutes: r.max_week_minutes == null ? null : Number(r.max_week_minutes),
   }));
 }
 
@@ -63,14 +67,33 @@ export function listShifts(db: DB, venueId: string, fromUtc: string, toUtc: stri
   const rows = db
     .prepare("SELECT * FROM shifts WHERE venue_id = ? AND start_at >= ? AND start_at < ? ORDER BY start_at")
     .all(venueId, fromUtc, toUtc) as Row[];
-  return rows.map((r) => ({
-    id: str(r.id),
-    staffId: str(r.staff_id),
-    role: str(r.role),
-    startAt: str(r.start_at),
-    endAt: str(r.end_at),
-    note: r.note == null ? null : str(r.note),
-  }));
+  return rows.map(toShift);
+}
+
+export function getShift(db: DB, venueId: string, shiftId: string): Shift | null {
+  const r = db.prepare("SELECT * FROM shifts WHERE id = ? AND venue_id = ?").get(shiftId, venueId) as Row | undefined;
+  return r ? toShift(r) : null;
+}
+
+const toShift = (r: Row): Shift => ({
+  id: str(r.id),
+  staffId: str(r.staff_id),
+  role: str(r.role),
+  startAt: str(r.start_at),
+  endAt: str(r.end_at),
+  note: r.note == null ? null : str(r.note),
+});
+
+export function insertShift(db: DB, venueId: string, shift: Shift) {
+  db.prepare("INSERT INTO shifts (id, venue_id, staff_id, role, start_at, end_at, note) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    shift.id,
+    venueId,
+    shift.staffId,
+    shift.role,
+    shift.startAt,
+    shift.endAt,
+    shift.note,
+  );
 }
 
 // Times are local to the venue. An end time earlier than the start means the
@@ -95,20 +118,17 @@ export function createShift(
     endAt: zonedToUtc(endDate, input.end, venue.timezone),
     note: input.note || null,
   };
-  db.prepare("INSERT INTO shifts (id, venue_id, staff_id, role, start_at, end_at, note) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    shift.id,
-    venue.id,
-    shift.staffId,
-    shift.role,
-    shift.startAt,
-    shift.endAt,
-    shift.note,
-  );
+  insertShift(db, venue.id, shift);
   return shift;
 }
 
 export function deleteShift(db: DB, venueId: string, shiftId: string): boolean {
   return Number(db.prepare("DELETE FROM shifts WHERE id = ? AND venue_id = ?").run(shiftId, venueId).changes) > 0;
+}
+
+export function isPublished(db: DB, venueId: string, weekStart: string): boolean {
+  const r = db.prepare("SELECT published_at FROM schedule_weeks WHERE venue_id = ? AND week_start = ?").get(venueId, weekStart) as Row | undefined;
+  return !!r && r.published_at != null;
 }
 
 // ---------- Time clock ----------
@@ -224,7 +244,10 @@ export function myWeek(db: DB, venue: Venue, staffId: string, anyDate: string): 
   return {
     staff,
     week: range.days,
-    shifts: listShifts(db, venue.id, range.fromUtc, range.toUtc).filter((s) => s.staffId === staffId),
+    // Staff see a week only once the manager publishes it.
+    shifts: isPublished(db, venue.id, range.start)
+      ? listShifts(db, venue.id, range.fromUtc, range.toUtc).filter((s) => s.staffId === staffId)
+      : [],
     sessions,
     punches: listPunches(db, staffId, range.fromUtc, range.toUtc),
     pay: weekPay(sessions, staff.hourlyRateCents, rulesFor(venue.province)),

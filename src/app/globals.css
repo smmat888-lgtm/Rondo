@@ -93,3 +93,15 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 .status { display: flex; gap: 10px; align-items: center; font-size: 13px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); display: inline-block; }
 .dot.off { background: var(--bad); }
+
+/* Automation */
+.issues { margin: 8px 0 12px; padding-left: 20px; }
+.issues li { margin: 4px 0; }
+.chip.open { background: transparent; border-style: dashed; flex-direction: column; }
+.chip.open.filled { border-color: var(--ok); }
+.chip.open.unfilled { border-color: var(--bad); }
+.chip .status { display: block; color: var(--muted); font-size: 12px; }
+.chip.open.unfilled .status { color: var(--bad); }
+.chip.open.filled .status { color: var(--ok); }
+.offer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; border-color: var(--gold); }
+.avail { display: grid; grid-template-columns: 70px 110px 1fr; gap: 8px 12px; align-items: center; }

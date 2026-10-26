@@ -4,7 +4,9 @@
 import { NextResponse } from "next/server";
 import { DEMO_VENUE, openDb, seedDemo, type DB } from "./db";
 import { seedDemoActivity } from "./demo";
-import { getVenue } from "./repo";
+import { tickOpenShifts } from "./automation";
+import { flushEmail } from "./notify";
+import { checkPin, getVenue, type Venue } from "./repo";
 
 const g = globalThis as unknown as { rondoDb?: DB };
 
@@ -36,4 +38,17 @@ export async function body<T>(req: Request): Promise<T | null> {
 
 export function todayIn(tz: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date());
+}
+
+// Runs the automatic steps (open-shift offers) and sends any queued email copies.
+// Called from the routes the screens poll, so offers move forward with no cron.
+export async function runAutomation(db: DB, venue: Venue, now = new Date()) {
+  tickOpenShifts(db, venue, now);
+  await flushEmail(db);
+}
+
+// Staff actions are signed with name + PIN until real accounts exist.
+export function staffFromPin(db: DB, input: { staffId?: string; pin?: string } | null): string | null {
+  if (!input?.staffId || !input.pin) return null;
+  return checkPin(db, input.staffId, input.pin) ? input.staffId : null;
 }

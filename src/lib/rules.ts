@@ -13,6 +13,8 @@ export type ProvinceRules = {
   breakAfterMinutes: number; // no more than this many minutes in a row without a break
   breakMinutes: number; // length of the required break
   callInMinimumMinutes: number; // minimum paid time when someone reports for work
+  overtimeWarnAtMinutes: number; // schedule warning before the overtime line
+  weeklyRestMinutes: number; // consecutive time off each week (verify exemptions with a lawyer)
 };
 
 export const NOVA_SCOTIA: ProvinceRules = {
@@ -23,6 +25,8 @@ export const NOVA_SCOTIA: ProvinceRules = {
   breakAfterMinutes: 5 * 60,
   breakMinutes: 30,
   callInMinimumMinutes: 3 * 60,
+  overtimeWarnAtMinutes: 44 * 60,
+  weeklyRestMinutes: 24 * 60,
 };
 
 export function rulesFor(province: string): ProvinceRules {
